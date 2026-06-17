@@ -42,6 +42,23 @@ minimind 官方未发布 0.6B 级权重。因此选 minimind 演示"从零预训
     └── report_outline.md            # 报告骨架 + 文献 + 必截图清单
 ```
 
+## 已验证版本组合（首次跑通后请回填）
+
+`requirements.txt` 给 `transformers / trl / unsloth / vllm` 留了较宽的版本区间，
+**首次在 AutoDL 上完整跑通三个算例后**，强烈建议把当时实际生效的精确版本固化到
+`requirements.lock.txt` 并提交到仓库 —— 课程作业是一次性交付，但批阅老师如果
+真去 `pip install` 你的项目，宽区间装出来的版本组合很可能已经不兼容：
+
+```bash
+# 在 AutoDL 上，确认任务二/三都跑通后执行：
+pip freeze | grep -E "^(unsloth|trl|vllm|transformers|accelerate|peft|datasets)=" \
+    > requirements.lock.txt
+git add requirements.lock.txt && git commit -m "lock: verified versions on AutoDL"
+git push
+```
+
+之后任何复现者使用 `pip install -r requirements.lock.txt` 即可拿到与你完全一致的环境。
+
 ## 完整工作流
 
 ### 第一步：本地（VSCode）准备与冒烟验证

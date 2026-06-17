@@ -9,11 +9,15 @@
     python task2_sft_qwen0.6b/train_sft_unsloth.py \
         --model_path /root/autodl-tmp/models/Qwen3-0.6B \
         --data_path data/out/sft_guwen_train.jsonl \
+        --val_path  data/out/sft_guwen_val.jsonl \
         --output_dir /root/autodl-tmp/outputs/task2_sft
 
 训练曲线: tensorboard --logdir /root/autodl-tmp/outputs/task2_sft --port 6007
+        曲线包含 train/loss + eval/loss 两条；最佳 ckpt 在 output_dir 下，
+        训练结束自动 load_best_model_at_end，再做 LoRA 保存。
 排错提示: unsloth/trl 接口迭代较快，若报参数不匹配，
           以 https://docs.unsloth.ai 最新示例为准微调本脚本。
+          本脚本已迁移到 trl >= 0.15 的 SFTConfig + processing_class 接口。
 """
 import os
 
@@ -27,8 +31,7 @@ import argparse  # noqa: E402
 import json  # noqa: E402
 
 from datasets import Dataset  # noqa: E402
-from transformers import TrainingArguments  # noqa: E402
-from trl import SFTTrainer  # noqa: E402
+from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 
 def load_jsonl(path):
@@ -46,6 +49,8 @@ def main():
     ap.add_argument("--model_path", default="/root/autodl-tmp/models/Qwen3-0.6B",
                     help="本地模型目录（推荐先用 modelscope 下载）或 HF 模型名")
     ap.add_argument("--data_path", default="data/out/sft_guwen_train.jsonl")
+    ap.add_argument("--val_path", default="data/out/sft_guwen_val.jsonl",
+                    help="验证集路径，文件不存在时自动跳过验证集评测")
     ap.add_argument("--output_dir", default="/root/autodl-tmp/outputs/task2_sft")
     ap.add_argument("--max_seq_len", type=int, default=1024)
     ap.add_argument("--epochs", type=float, default=2.0)
@@ -54,6 +59,8 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--lora_r", type=int, default=16)
     ap.add_argument("--max_samples", type=int, default=0, help="0=全量；先用 200 冒烟测试")
+    ap.add_argument("--eval_steps", type=int, default=100, help="每多少步在验证集上评测一次")
+    ap.add_argument("--save_steps", type=int, default=200, help="每多少步保存一次 checkpoint")
     ap.add_argument("--save_merged", action="store_true", help="额外导出合并后的完整权重")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
@@ -95,8 +102,17 @@ def main():
     print(f"[i] 训练样本数: {len(ds)}")
     print("[i] 模板化后的样例:\n" + ds[0]["text"][:400])
 
+    # 验证集（可选）：文件存在就加载，便于训练过程中观察 eval_loss
+    eval_ds = None
+    if args.val_path and os.path.exists(args.val_path):
+        val_rows = load_jsonl(args.val_path)
+        eval_ds = Dataset.from_list([{"text": to_text(r["conversations"])} for r in val_rows])
+        print(f"[i] 验证样本数: {len(eval_ds)}")
+    else:
+        print(f"[i] 未找到验证集 {args.val_path}，将不做验证集评测")
+
     # ---------- 3. 训练 ----------
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
@@ -105,7 +121,15 @@ def main():
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         logging_steps=10,
-        save_strategy="no",          # 结束后统一保存
+        # 验证集存在时按步评测；存在时也按步保存 checkpoint，方便挑最佳
+        eval_strategy="steps" if eval_ds is not None else "no",
+        eval_steps=args.eval_steps,
+        save_strategy="steps" if eval_ds is not None else "no",
+        save_steps=args.save_steps,
+        save_total_limit=2,
+        load_best_model_at_end=eval_ds is not None,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
         optim="adamw_8bit",
         weight_decay=0.01,
         bf16=is_bfloat16_supported(),
@@ -113,14 +137,16 @@ def main():
         report_to="tensorboard",
         logging_dir=os.path.join(args.output_dir, "tb"),
         seed=args.seed,
-    )
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=ds,
+        # SFT 专属参数（trl >= 0.15 起放在 SFTConfig 而不是 SFTTrainer 上）
         dataset_text_field="text",
         max_seq_length=args.max_seq_len,
         packing=False,
+    )
+    trainer = SFTTrainer(
+        model=model,
+        processing_class=tokenizer,
+        train_dataset=ds,
+        eval_dataset=eval_ds,
         args=training_args,
     )
 

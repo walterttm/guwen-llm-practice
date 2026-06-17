@@ -1,18 +1,22 @@
 # ---- 通用 ----
-modelscope                       # 国内下载 Qwen3-0.6B 权重
-opencc-python-reimplemented      # 古诗词繁体 -> 简体
-datasets>=2.19
-transformers>=4.51               # Qwen3 需要 >=4.51
-accelerate
-peft
+modelscope                              # 国内下载 Qwen3-0.6B 权重
+opencc-python-reimplemented             # 古诗词繁体 -> 简体
+datasets>=2.19,<3.0
+transformers>=4.51,<5.0                 # Qwen3 需要 >=4.51；锁 <5.0 避免大版本破坏性变更
+accelerate>=0.30,<2.0
+peft>=0.10,<1.0
 tensorboard
 matplotlib
 
 # ---- 任务二 / 任务三（unsloth 微调与 GRPO）----
-# 注意: unsloth 安装会自动匹配 torch/cuda 版本；若与镜像自带 torch 冲突，
-#       参考 https://docs.unsloth.ai 选择对应 extra（如 pip install "unsloth[cu124-torch250]"）
-unsloth
-trl>=0.15
-vllm                             # GRPO 快速采样用；装不上可在训练脚本加 --no_vllm
+# 注意 1: unsloth 安装会自动匹配 torch/cuda 版本；若与镜像自带 torch 冲突，
+#         参考 https://docs.unsloth.ai 选择对应 extra（如 pip install "unsloth[cu124-torch250]"）。
+# 注意 2: trl/unsloth/vllm 三家迭代很快，下面的上下限是"目前能装出可工作组合"的安全区间。
+#         首次在 AutoDL 上跑通后，建议执行：
+#             pip freeze | grep -E "^(unsloth|trl|vllm|transformers|accelerate|peft)=" >> requirements.lock.txt
+#         把这份 lock 提交到仓库，下次复现就用 `pip install -r requirements.lock.txt`。
+unsloth>=2025.5
+trl>=0.15,<0.22                         # 0.15+ 引入 SFTConfig；锁 <0.22 避免后续 GRPOConfig 接口破坏
+vllm>=0.7,<0.10                         # GRPO 快速采样用；装不上可在训练脚本加 --no_vllm
 
 # ---- 任务一（minimind 的依赖在其自己仓库的 requirements.txt 中安装）----

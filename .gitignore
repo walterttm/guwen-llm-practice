@@ -1,0 +1,23 @@
+# 原始与生成数据（体积大，不进仓库；用脚本可随时重建）
+data/raw/
+data/out/
+
+# 训练产物
+outputs/
+out/
+*.pth
+*.safetensors
+*.bin
+runs/
+wandb/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 系统/编辑器
+.DS_Store
+.idea/
+.vscode/
+*.log

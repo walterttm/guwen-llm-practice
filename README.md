@@ -109,7 +109,7 @@ python data/build_sft_dataset.py
 # 约 1~2 小时
 
 # ---- 任务二：0.6B LoRA SFT（约 30 分钟）----
-python task2_sft_qwen0.6b/train_sft_unsloth.py --max_steps 10   # 冒烟
+python task2_sft_qwen0.6b/train_sft_unsloth.py --max_steps 10 --eval_steps 5 --save_steps 10   # 冒烟（顺便验证 eval/存ckpt/加载最佳流程）
 python task2_sft_qwen0.6b/train_sft_unsloth.py                  # 正式
 python task2_sft_qwen0.6b/infer_compare.py                      # 生成对比素材
 

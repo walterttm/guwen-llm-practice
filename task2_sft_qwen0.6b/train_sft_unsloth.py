@@ -54,6 +54,8 @@ def main():
     ap.add_argument("--output_dir", default="/root/autodl-tmp/outputs/task2_sft")
     ap.add_argument("--max_seq_len", type=int, default=1024)
     ap.add_argument("--epochs", type=float, default=2.0)
+    ap.add_argument("--max_steps", type=int, default=-1,
+                    help="设为正数则覆盖 epochs，按步数训练（冒烟用，如 10）；-1=按 epochs 训练")
     ap.add_argument("--batch_size", type=int, default=16)
     ap.add_argument("--grad_accum", type=int, default=1)
     ap.add_argument("--lr", type=float, default=2e-4)
@@ -117,6 +119,7 @@ def main():
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         num_train_epochs=args.epochs,
+        max_steps=args.max_steps,            # >0 时覆盖 epochs，按步数训练；-1=按 epochs
         learning_rate=args.lr,
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",

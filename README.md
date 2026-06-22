@@ -1,164 +1,151 @@
-# 古诗词 LLM 实践：从头训练 · 0.6B 微调 · GRPO 后训练
+# 古典诗词大模型训练实践：从头预训练 · LoRA 微调 · GRPO 强化学习
 
-面向课程实践报告的完整可复现项目。以**中国古典诗词**为特色数据主线，
-覆盖大模型训练的三个核心阶段，并在后训练算例中复现 mini 版 **"Aha Moment"**。
+在单张 24 GB 消费级 GPU 上完整复现大语言模型三阶段训练的开源项目。以**中国古典诗词**为领域主线，
+覆盖「从零预训练 → 指令微调 → 强化学习后训练」，并在 GSM8K 数学推理上用 GRPO 复现可验证奖励
+驱动的推理能力提升与反思式 **“Aha Moment”** 现象。
 
-## 与作业要求的对应关系
+项目包含三个相互独立的算例：
 
-| 作业要求 | 本项目方案 |
-| --- | --- |
-| 框架三选一 | **minimind**（任务一从头训练）+ **unsloth**（任务二/三，本身也是候选框架之一）。两者组合的原因见下方"方案说明" |
-| 特色数据集 | [chinese-poetry](https://github.com/chinese-poetry/chinese-poetry)（全唐诗/宋词约 30 万首，繁转简后构建语料与指令集）；任务三用 GSM8K 数学题（可验证奖励是产生 Aha Moment 的前提） |
-| 算例① 从头训练 | minimind 64M 模型在古诗词语料上预训练（`task1_pretrain_minimind/`） |
-| 算例② ≥0.6B 微调 | Qwen3-0.6B + LoRA SFT，微调成"古诗词助手"（`task2_sft_qwen0.6b/`） |
-| 算例③ 后训练 | Qwen3-0.6B + **GRPO** 强化学习 on GSM8K，观察 Aha Moment（`task3_grpo_qwen0.6b/`） |
-| 文献叙述 | `report/report_outline.md` 已列好问题背景、相关工作与参考文献骨架 |
+- **算例一 · 从头预训练** —— 用 [MiniMind](https://github.com/jingyaogong/minimind) 在 [chinese-poetry](https://github.com/chinese-poetry/chinese-poetry) 语料上从随机初始化训练一个约 64M 参数的 Transformer 解码器。
+- **算例二 · 指令微调** —— 基于 [unsloth](https://github.com/unslothai/unsloth) + LoRA 对 Qwen3-0.6B 做参数高效微调，构建古诗词续写 / 默写 / 出处问答能力。
+- **算例三 · GRPO 后训练** —— 在 GSM8K 上以五项规则奖励对 Qwen3-0.6B 做组相对策略优化（GRPO），观察推理准确率提升与反思涌现。
 
-**方案说明（报告里也建议写明，体现技术判断）**：三个候选框架没有任何
-一个能独立覆盖三个算例 —— nanoGPT 无后训练支持、unsloth 不做从头训练、
-minimind 官方未发布 0.6B 级权重。因此选 minimind 演示"从零预训练"
-（代码极简、单文件可读，最适合在报告中拆解原理），选 unsloth 完成
-0.6B 微调与 GRPO（显存省、速度快、官方 GRPO 教程成熟）。
+## 主要结果
 
-## 仓库结构
+| 算例 | 模型 | 任务 / 数据 | 关键指标 |
+| --- | --- | --- | --- |
+| 一 · 从头预训练 | MiniMind（~64M） | chinese-poetry | 训练损失 6.1 → **2.7**（困惑度 ≈ 15） |
+| 二 · LoRA SFT | Qwen3-0.6B | 古诗词指令集（21.6k） | 验证损失 3.07 → **2.40**，无过拟合 |
+| 三 · GRPO | Qwen3-0.6B | GSM8K | 准确率 38.0% → **59.5%**（+21.5 pp，贪心解码） |
+
+各算例的损失 / 奖励曲线与详细分析见下文「算例与分析」。
+
+## 项目结构
 
 ```
-├── setup_autodl.sh                  # AutoDL 一键环境配置
+├── data/                       # 语料与指令集构建
+│   ├── download_poetry.sh      # 拉取 chinese-poetry 原始语料
+│   ├── build_pretrain_corpus.py  # → data/out/pretrain_guwen.jsonl
+│   └── build_sft_dataset.py    # → data/out/sft_guwen_{train,val}.jsonl
+├── task1_pretrain_minimind/    # 算例一：从头预训练（详见该目录 README）
+│   └── plot_loss_from_log.py
+├── task2_sft_qwen0.6b/         # 算例二：LoRA SFT
+│   ├── train_sft_unsloth.py
+│   └── infer_compare.py        # 微调前后同题对比 → compare.md
+├── task3_grpo_qwen0.6b/        # 算例三：GRPO + 评测
+│   ├── train_grpo_unsloth.py   # 规则奖励（正确性 + 格式）
+│   └── eval_gsm8k.py           # 前后准确率 + 反思片段扫描
+├── assets/                     # README 配图
 ├── requirements.txt
-├── data/
-│   ├── download_poetry.sh           # 下载 chinese-poetry 原始数据
-│   ├── build_pretrain_corpus.py     # -> data/out/pretrain_guwen.jsonl（任务一语料）
-│   └── build_sft_dataset.py         # -> 续写/默写/出处问答 指令集（任务二数据）
-├── task1_pretrain_minimind/
-│   ├── README.md                    # minimind 从头训练完整操作步骤
-│   └── plot_loss_from_log.py        # 从训练日志画 loss 曲线
-├── task2_sft_qwen0.6b/
-│   ├── train_sft_unsloth.py         # LoRA SFT
-│   └── infer_compare.py             # 微调前后同题对比 -> compare.md
-├── task3_grpo_qwen0.6b/
-│   ├── train_grpo_unsloth.py        # GRPO（规则奖励：正确性+格式）
-│   └── eval_gsm8k.py                # 前后准确率对比 + Aha 片段扫描
-└── report/
-    └── report_outline.md            # 报告骨架 + 文献 + 必截图清单
+└── setup_autodl.sh             # 一键安装依赖并下载基座模型
 ```
 
-## 已验证版本组合（首次跑通后请回填）
-
-`requirements.txt` 给 `transformers / trl / unsloth / vllm` 留了较宽的版本区间，
-**首次在 AutoDL 上完整跑通三个算例后**，强烈建议把当时实际生效的精确版本固化到
-`requirements.lock.txt` 并提交到仓库 —— 课程作业是一次性交付，但批阅老师如果
-真去 `pip install` 你的项目，宽区间装出来的版本组合很可能已经不兼容：
+## 安装
 
 ```bash
-# 在 AutoDL 上，确认任务二/三都跑通后执行：
-pip freeze | grep -E "^(unsloth|trl|vllm|transformers|accelerate|peft|datasets)=" \
-    > requirements.lock.txt
-git add requirements.lock.txt && git commit -m "lock: verified versions on AutoDL"
-git push
+pip install -r requirements.txt
 ```
 
-之后任何复现者使用 `pip install -r requirements.lock.txt` 即可拿到与你完全一致的环境。
+`unsloth / trl / vLLM` 迭代较快，建议按各自文档选择与本机 CUDA 匹配的版本；
+若 vLLM 安装困难，算例三可加 `--no_vllm` 回退到纯 transformers 采样。
+HuggingFace 访问已在脚本内默认走镜像（`HF_ENDPOINT=hf-mirror.com`）。
 
-## 完整工作流
-
-### 第一步：本地（VSCode）准备与冒烟验证
-
-数据脚本不依赖 GPU，本地就能把数据集构建好并检查质量：
+## 数据准备
 
 ```bash
-pip install opencc-python-reimplemented
-bash data/download_poetry.sh          # 约 700MB，慢可挂代理
-python data/build_pretrain_corpus.py --max_samples 200000
-python data/build_sft_dataset.py
-head -n 3 data/out/pretrain_guwen.jsonl   # 肉眼检查
+bash data/download_poetry.sh                              # 拉取原始诗词语料
+python data/build_pretrain_corpus.py --max_samples 200000  # 预训练语料
+python data/build_sft_dataset.py                          # 续写/默写/出处问答 指令集
 ```
 
-### 第二步：push 到 GitHub / Gitee
+构建脚本会完成繁简转换与清洗，产出与下游训练对齐的 `data/out/*.jsonl`。
+
+---
+
+## 算例与分析
+
+### 算例一 · 从头预训练（MiniMind, ~64M）
+
+在 chinese-poetry 上从随机初始化预训练一个约 64M 的 Transformer 解码器
+（hidden 768 / 8 层，RMSNorm + RoPE + SwiGLU）。完整步骤见
+[`task1_pretrain_minimind/README.md`](task1_pretrain_minimind/README.md)，核心命令：
 
 ```bash
-git init && git add -A && git commit -m "init: guwen llm practice"
-git remote add origin git@github.com:<你的用户名>/guwen-llm-practice.git
-git push -u origin main
-# 国内访问 GitHub 不稳时，建议同时加 gitee 远程做镜像：
-git remote add gitee git@gitee.com:<你的用户名>/guwen-llm-practice.git
-git push gitee main
+git clone --depth 1 https://github.com/jingyaogong/minimind.git
+cd minimind/trainer && python train_pretrain.py \
+    --data_path <repo>/data/out/pretrain_guwen.jsonl \
+    --epochs 2 --batch_size 32 --learning_rate 5e-4 \
+    --max_seq_len 340 --hidden_size 768 --num_hidden_layers 8
 ```
 
-> `.gitignore` 已排除 `data/raw`、`data/out` 与权重文件 ——
-> 数据在 AutoDL 上重新跑脚本生成即可，仓库保持轻量。
+![算例一训练损失曲线](assets/task1_loss.png)
 
-### 第三步：AutoDL 租卡训练
+**分析。** 训练损失自约 6.1 平滑收敛至约 2.7（困惑度 ≈ 15），曲线前陡后平、无发散。
+模型习得了五 / 七言的节奏切分与一定的对仗倾向，并掌握语料中“《标题》作者 + 正文”的结构格式；
+受限于 64M 容量，其事实性较弱、易混搭名句——印证预训练阶段学到的是**语言形式与统计规律**，
+而非可靠的事实知识。
 
-1. 创建实例：GPU 选 **RTX 4090（24G）**，镜像选 PyTorch 2.5.x + Python 3.12 + CUDA 12.x；
-2. 拉代码并初始化环境：
+### 算例二 · LoRA 指令微调（Qwen3-0.6B + unsloth）
+
+以 Qwen3-0.6B 为基座，LoRA（$r=16$，作用于 `q/k/v/o` 与前馈投影）微调，
+数据为自建的续写（9k）/ 默写（7k）/ 出处问答（6k）指令集，仅在回答 token 上计算损失。
 
 ```bash
-source /etc/network_turbo                  # 学术加速
-git clone https://github.com/<你>/guwen-llm-practice.git /root/guwen-llm-practice
-cd /root/guwen-llm-practice
-bash setup_autodl.sh                       # 装依赖 + 下载 Qwen3-0.6B
-bash data/download_poetry.sh
-python data/build_pretrain_corpus.py
-python data/build_sft_dataset.py
+python task2_sft_qwen0.6b/train_sft_unsloth.py       # 2 epoch · batch 16 · lr 2e-4
+python task2_sft_qwen0.6b/infer_compare.py           # 微调前后同题对比 → compare.md
 ```
 
-3. 三个算例依次跑（**每个先冒烟，再正式跑**）：
+![算例二 SFT 损失曲线](assets/task2_sft_loss.png)
+
+**分析。** 训练损失 4.52 → 2.19，验证损失 3.07 → 2.40 全程单调下降且无回升，
+表明模型恰好充分收敛、未过拟合。但定性对比揭示一个值得注意的现象：
+微调后在部分题目上的表观质量并未优于基座。归因有二，且均**非训练性问题**：
+（1）原始语料中的编者注解（如“（见《全唐诗续拾》卷三四）”）未经清洗即作为目标答案，
+模型忠实学到了“输出注解”的伪模式；（2）贪心解码下小模型出现复读退化。
+这说明 **SFT 改变的是模型的“行为风格”而非“知识容量”**，且“损失下降 ≠ 生成质量提升”——
+对小模型而言，数据清洗与解码策略与训练本身同等关键。
+
+### 算例三 · GRPO 后训练（Qwen3-0.6B on GSM8K）
+
+在 GSM8K 上用 GRPO 进行强化学习后训练。奖励完全由程序自动核验，不可被 reward hacking：
+
+| 奖励项 | 触发条件 | 分值 |
+| --- | --- | --- |
+| 正确性 | 抽取答案与标准答案数值相等 | +2.0 |
+| 数值性 | 答案为合法数字 | +0.5 |
+| 严格格式 | 匹配 `<reasoning>…</reasoning>\n<answer>…</answer>` | +0.5 |
+| 宽松格式 | 出现两对标签 | +0.5 |
+| 标签计数 | 每个正确标签 +0.125 | 0–0.5 |
 
 ```bash
-# ---- 任务一：从头训练（详见 task1_pretrain_minimind/README.md）----
-# 约 1~2 小时
-
-# ---- 任务二：0.6B LoRA SFT（约 30 分钟）----
-python task2_sft_qwen0.6b/train_sft_unsloth.py --max_steps 10 --eval_steps 5 --save_steps 10   # 冒烟（顺便验证 eval/存ckpt/加载最佳流程）
-python task2_sft_qwen0.6b/train_sft_unsloth.py                  # 正式
-python task2_sft_qwen0.6b/infer_compare.py                      # 生成对比素材
-
-# ---- 任务三：GRPO 后训练（约 2~3 小时）----
-python task3_grpo_qwen0.6b/train_grpo_unsloth.py --max_steps 10 # 冒烟
-python task3_grpo_qwen0.6b/train_grpo_unsloth.py                # 正式 500 步
-python task3_grpo_qwen0.6b/eval_gsm8k.py --n 200                # 前后准确率+Aha扫描
+python task3_grpo_qwen0.6b/train_grpo_unsloth.py     # 500 步 · G=8 · lr 5e-6
+python task3_grpo_qwen0.6b/eval_gsm8k.py --n 200     # 前后准确率 + 反思片段扫描
 ```
 
-4. 训练曲线（任务二/三）用 tensorboard 看并截图：
+![算例三 GRPO 奖励曲线](assets/task3_grpo_reward.png)
 
-```bash
-tensorboard --logdir /root/autodl-tmp/outputs --port 6006
-# AutoDL 控制台 -> 自定义服务 映射 6006 端口后浏览器打开
-```
+**分析。** GRPO 将 GSM8K 贪心解码准确率从 38.0% 提升至 59.5%（+21.5 个百分点）。
+训练过程与 DeepSeek-R1 的描述一致：**格式类奖励先快速饱和**（严格格式 0.24 → 0.47，上限 0.5），
+**正确性奖励随后台阶式抬升**，平均回答长度自适应缩短（677 → 474 token），KL 散度稳步上升而未发散。
+关键词扫描得到的反思候选中，存在完整成功的反思式解题（正确建立方程并求解）；
+但小模型上的反思并不稳定，部分会退化为重复直至触发长度截断。
+即字面意义的 **“Aha Moment”在 0.6B / 500 步设定下可涌现但脆弱**，
+与模型规模和训练规模相关——这从反面印证了 R1 论文的核心观察。
 
-5. 下载报告素材到本地：loss 曲线 png、`compare.md`、tensorboard 截图、
-   `aha_candidates.md`、`summary.json`。AutoDL 文件传输用 JupyterLab
-   下载或 `scp` 均可。**跑完记得关机停止计费。**
+---
 
-### 费用估算
+## 结论
 
-4090 约 ¥1.5~2.2/小时。任务一 1~2h + 任务二 0.5h + 任务三 2~3h +
-调试余量 ≈ **6~9 卡时，¥15~25** 以内可完成全部算例。
+三个算例分别从预训练、监督微调、强化学习后训练三个层面，对现代 LLM 训练范式做了
+可观察、可归因的小规模复现：（1）从零预训练验证了“数据 → 损失 → 生成形式”的因果链；
+（2）LoRA 微调在指标上充分收敛，并暴露出“损失下降但生成质量受数据噪声与解码策略影响”的反差；
+（3）GRPO 以可验证奖励显著提升了小模型的数学推理准确率，并复现了反思语言的涌现及其规模依赖性。
+一个自然的延伸方向是将 GRPO 用于诗词格律本身——平仄、押韵与对仗同样是可程序化验证的奖励信号。
 
-## "Aha Moment" 预期管理（写报告前必读）
+## 致谢与参考
 
-DeepSeek-R1 的 Aha Moment（模型自发出现"wait, let me re-check"式反思）
-出现在 671B 模型的大规模 RL 中。0.6B + 500 步 GRPO 的小算例里，**合理的
-预期**是观察到以下"涌现迹象"，它们都可以作为报告中的 Aha 证据：
-
-1. **reward 曲线台阶式跳变**（先学会 `<reasoning>/<answer>` 格式 → 正确率
-   奖励再上台阶）—— tensorboard 截图；
-2. **回复长度变化**（`completions/mean_length` 曲线，R1 论文中思维链变长
-   与反思行为相伴）；
-3. **GSM8K 准确率提升**（`eval_gsm8k.py` 给出训练前后对比数字）；
-4. `aha_candidates.md` 中若扫到反思类语句，挑 1~2 条人工确认后截图 ——
-   这是最接近字面意义的 Aha Moment，小模型不保证出现，**没有也不影响
-   报告结论**（如实写"在小规模下观察到 1/2/3，未稳定出现 4"反而严谨）。
-   想提高出现概率，可把基座换成 Qwen3-1.7B（脚本传 `--model_path` 即可，
-   显存与时间约翻倍）。
-
-## 常见坑速查
-
-| 问题 | 解决 |
-| --- | --- |
-| HuggingFace 连不上 | 所有脚本已内置 `HF_ENDPOINT=hf-mirror.com`；确认 `setup_autodl.sh` 已执行 |
-| unsloth/vllm 安装冲突 | 按 https://docs.unsloth.ai 选与 torch/cuda 匹配的安装命令；vllm 实在装不上，GRPO 加 `--no_vllm` |
-| GRPO 显存 OOM | 降 `--num_generations 4 --batch_size 4`，或 `--max_completion_len 512` |
-| trl/unsloth 接口报参数错误 | 两库迭代快，按报错对照官方最新 GRPO notebook 改 1~2 个参数名即可 |
-| GSM8K 下载失败 | 已走 hf-mirror；仍失败可手动下载 parquet 后 `load_dataset("parquet", data_files=...)` |
-| minimind loss=nan | 学习率减半；检查 jsonl 格式 |
+- MiniMind · <https://github.com/jingyaogong/minimind>
+- unsloth · <https://github.com/unslothai/unsloth>
+- chinese-poetry · <https://github.com/chinese-poetry/chinese-poetry>
+- Qwen3 · <https://github.com/QwenLM/Qwen3>
+- GRPO：DeepSeekMath, arXiv:2402.03300 ｜ Aha Moment：DeepSeek-R1, arXiv:2501.12948 ｜ GSM8K, arXiv:2110.14168
